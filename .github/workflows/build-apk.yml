@@ -64,18 +64,17 @@ jobs:
             ./gradlew :app:assembleDebug --no-daemon
           fi
 
-      - name: Publish APK (replace previous)
+      - name: Publish APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           APK=$(find "$PROJ" -path '*/outputs/apk/*' -name '*.apk' | head -1)
           if [ -z "$APK" ]; then echo "::error::没找到编译产物"; exit 1; fi
-          OUT="app-latest.apk"
+          OUT="app-${{ inputs.run_tag }}.apk"
           cp "$APK" "$OUT"
           echo "APK 大小：$(du -h "$OUT" | cut -f1)"
-          # 只保留一个 latest 发布，旧的连同 tag 一起删掉，链接永远指向最新
-          gh release delete latest-apk -y --cleanup-tag 2>/dev/null || true
-          gh release create latest-apk "$OUT" \
-            --title "最新 APK" \
-            --notes "每次编译覆盖此发布（${{ inputs.variant }} / ${{ inputs.run_tag }}）"
+          gh release create "apk-${{ inputs.run_tag }}" "$OUT" \
+            --title "APK ${{ inputs.run_tag }}" \
+            --notes "自动编译产物（${{ inputs.variant }}）" \
+            --latest=false || gh release upload "apk-${{ inputs.run_tag }}" "$OUT" --clobber
