@@ -1,5 +1,4 @@
 name: Build APK
-run-name: Build APK ${{ inputs.run_tag }} (${{ inputs.variant }})
 on:
   workflow_dispatch:
     inputs:
@@ -12,10 +11,6 @@ on:
         default: 'debug'
       app_id:
         description: 'optional applicationId override'
-        required: false
-        default: ''
-      apk_name:
-        description: 'APK filename (without .apk), empty = auto'
         required: false
         default: ''
 permissions:
@@ -69,53 +64,18 @@ jobs:
             ./gradlew :app:assembleDebug --no-daemon
           fi
 
-      - name: Publish APK
+      - name: Publish APK (replace previous)
         env:
           GH_TOKEN: ${{ github.token }}
-          VARIANT: ${{ inputs.variant }}
-          APK_NAME: ${{ inputs.apk_name }}
-          RUN_TAG: ${{ inputs.run_tag }}
         run: |
           set -e
-          cd "$PROJ"
-
-          # 精确定位本次编译产物，避免拿到 intermediates 或旧的 APK
-          APK=""
-          if [ "$VARIANT" = "release" ]; then
-            for p in "app/build/outputs/apk/release/app-release.apk" \
-                     "app/build/outputs/apk/release/app-release-signed.apk"; do
-              [ -f "$p" ] && { APK="$p"; break; }
-            done
-            if [ -z "$APK" ]; then
-              APK=$(find . -path '*/outputs/apk/release/*.apk' ! -name '*unsigned*' | head -1)
-            fi
-            if [ -z "$APK" ]; then
-              APK=$(find . -path '*/outputs/apk/release/*.apk' | head -1)
-            fi
-          else
-            for p in "app/build/outputs/apk/debug/app-debug.apk"; do
-              [ -f "$p" ] && { APK="$p"; break; }
-            done
-            [ -z "$APK" ] && APK=$(find . -path '*/outputs/apk/debug/*.apk' | head -1)
-          fi
-
-          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
-            echo "::error::没找到编译产物"; exit 1
-          fi
-          echo "原始 APK：$APK ($(du -h "$APK" | cut -f1))"
-
-          # 决定输出文件名
-          NAME="${APK_NAME:-app-$RUN_TAG}"
-          NAME=$(echo "$NAME" | tr -d '/\\:*?"<>|' | sed -E 's/^[.[:space:]]+|[[:space:]]+$//g')
-          NAME="${NAME%.apk}"
-          [ -z "$NAME" ] && NAME="app-$RUN_TAG"
-          OUT="${NAME}.apk"
-
+          APK=$(find "$PROJ" -path '*/outputs/apk/*' -name '*.apk' | head -1)
+          if [ -z "$APK" ]; then echo "::error::没找到编译产物"; exit 1; fi
+          OUT="app-latest.apk"
           cp "$APK" "$OUT"
-          echo "输出 APK：$OUT ($(du -h "$OUT" | cut -f1))"
-
-          # 每次都是全新 tag，保证是本次最新产物
-          gh release create "apk-$RUN_TAG" "$OUT" \
-            --title "$NAME" \
-            --notes "自动编译产物（$VARIANT） · $OUT" \
-            --latest=false || gh release upload "apk-$RUN_TAG" "$OUT" --clobber
+          echo "APK 大小：$(du -h "$OUT" | cut -f1)"
+          # 只保留一个 latest 发布，旧的连同 tag 一起删掉，链接永远指向最新
+          gh release delete latest-apk -y --cleanup-tag 2>/dev/null || true
+          gh release create latest-apk "$OUT" \
+            --title "最新 APK" \
+            --notes "每次编译覆盖此发布（${{ inputs.variant }} / ${{ inputs.run_tag }}）"
